@@ -1,0 +1,67 @@
+version: 2.1
+
+workflows:
+  version: 2
+  ci:
+    jobs:
+      - build
+
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 0 * * *"
+          filters:
+            branches:
+              only:
+                - main
+    jobs:
+      - build
+
+jobs:
+  build:
+    docker:
+      - image: cimg/base:2021.02
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+        environment:
+          CONTAINER_REPOSITORY: koshigoe/ruby
+          BUILT_TAG: built
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 18.09.3
+      - run:
+          name: build container image
+          command: |
+            docker build -f 2.7/amzn2/Dockerfile -t ${CONTAINER_REPOSITORY}:${BUILT_TAG} 2.7/amzn2
+            docker images
+      - deploy:
+          name: push container image
+          command: |
+            BUILT_IMAGE=${CONTAINER_REPOSITORY}:${BUILT_TAG}
+            echo built image: $BUILT_IMAGE
+
+            docker images
+
+            RUBY_VERSION=$(docker run --rm ${BUILT_IMAGE} ruby -e "puts RUBY_VERSION")
+            echo ruby version: $RUBY_VERSION
+
+            AMAZONLINUX_VERSION=$(docker run --rm ${BUILT_IMAGE} grep image_file= /etc/image-id | cut -d- -f4)
+            echo Amazon Linux 2: $AMAZONLINUX_VERSION
+
+            IMAGE_TAG_SHORT=${RUBY_VERSION}-amzn2
+            echo short tag: $IMAGE_TAG_SHORT
+
+            IMAGE_TAG_LONG=${RUBY_VERSION}-amzn${AMAZONLINUX_VERSION}-b${CIRCLE_BUILD_NUM}
+            echo long tag: $IMAGE_TAG_LONG
+
+            docker tag ${BUILT_IMAGE} ${CONTAINER_REPOSITORY}:${IMAGE_TAG_SHORT}
+            docker tag ${BUILT_IMAGE} ${CONTAINER_REPOSITORY}:${IMAGE_TAG_LONG}
+
+            echo ${DOCKERHUB_PASSWORD} | docker login -u ${DOCKERHUB_USERNAME} --password-stdin
+            docker push ${CONTAINER_REPOSITORY}:${IMAGE_TAG_LONG}
+
+            if [ "$CIRCLE_BRANCH" = "main" ]; then
+              docker push ${CONTAINER_REPOSITORY}:${IMAGE_TAG_SHORT}
+            fi
