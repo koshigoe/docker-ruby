@@ -34,34 +34,39 @@ jobs:
       - run:
           name: build container image
           command: |
-            docker build -f 2.7/amzn2/Dockerfile -t ${CONTAINER_REPOSITORY}:${BUILT_TAG} 2.7/amzn2
-            docker images
+            echo "export BUILT_IMAGE=${CONTAINER_REPOSITORY}:${BUILT_TAG}" >> $BASH_ENV
+            source $BASH_ENV
+
+            docker build -f 2.7/amzn2/Dockerfile -t ${BUILT_IMAGE} 2.7/amzn2
+      - run:
+          name: make container image tag
+          command: |
+            RUBY_VERSION=$(docker run --rm ${BUILT_IMAGE} ruby -e "puts RUBY_VERSION")
+            AMAZONLINUX_VERSION=$(docker run --rm ${BUILT_IMAGE} grep image_file= /etc/image-id | cut -d- -f4)
+            IMAGE_TAG_SHORT=${RUBY_VERSION}-amzn2
+            IMAGE_TAG_LONG=${RUBY_VERSION}-amzn${AMAZONLINUX_VERSION}-b${CIRCLE_BUILD_NUM}
+
+            cat \<<EOF >> $BASH_ENV
+            export RUBY_VERSION=$RUBY_VERSION
+            export AMAZONLINUX_VERSION=$AMAZONLINUX_VERSION
+            export IMAGE_TAG_SHORT=$IMAGE_TAG_SHORT
+            export IMAGE_TAG_LONG=$IMAGE_TAG_LONG
+            EOF
       - deploy:
           name: push container image
           command: |
-            BUILT_IMAGE=${CONTAINER_REPOSITORY}:${BUILT_TAG}
-            echo built image: $BUILT_IMAGE
-
-            docker images
-
-            RUBY_VERSION=$(docker run --rm ${BUILT_IMAGE} ruby -e "puts RUBY_VERSION")
-            echo ruby version: $RUBY_VERSION
-
-            AMAZONLINUX_VERSION=$(docker run --rm ${BUILT_IMAGE} grep image_file= /etc/image-id | cut -d- -f4)
-            echo Amazon Linux 2: $AMAZONLINUX_VERSION
-
-            IMAGE_TAG_SHORT=${RUBY_VERSION}-amzn2
-            echo short tag: $IMAGE_TAG_SHORT
-
-            IMAGE_TAG_LONG=${RUBY_VERSION}-amzn${AMAZONLINUX_VERSION}-b${CIRCLE_BUILD_NUM}
-            echo long tag: $IMAGE_TAG_LONG
-
-            docker tag ${BUILT_IMAGE} ${CONTAINER_REPOSITORY}:${IMAGE_TAG_SHORT}
-            docker tag ${BUILT_IMAGE} ${CONTAINER_REPOSITORY}:${IMAGE_TAG_LONG}
-
-            echo ${DOCKERHUB_PASSWORD} | docker login -u ${DOCKERHUB_USERNAME} --password-stdin
-            docker push ${CONTAINER_REPOSITORY}:${IMAGE_TAG_LONG}
+            cat \<<EOF
+            Ruby version:   $RUBY_VERSION
+            Amazon Linux 2: $AMAZONLINUX_VERSION
+            Short Tag:      $IMAGE_TAG_SHORT
+            Long Tag:       $IMAGE_TAG_LONG
+            EOF
 
             if [ "$CIRCLE_BRANCH" = "main" ]; then
+              docker tag ${BUILT_IMAGE} ${CONTAINER_REPOSITORY}:${IMAGE_TAG_SHORT}
+              docker tag ${BUILT_IMAGE} ${CONTAINER_REPOSITORY}:${IMAGE_TAG_LONG}
+
+              echo ${DOCKERHUB_PASSWORD} | docker login -u ${DOCKERHUB_USERNAME} --password-stdin
+              docker push ${CONTAINER_REPOSITORY}:${IMAGE_TAG_LONG}
               docker push ${CONTAINER_REPOSITORY}:${IMAGE_TAG_SHORT}
             fi
